@@ -1,3 +1,8 @@
+import {
+  requestStages as stages,
+  customerRequestStage,
+  customerEventStage,
+} from "./request-stages";
 import RequestConversation from "./RequestConversation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import "./request-board.css";
@@ -15,6 +20,8 @@ type RequestItem = {
   type: string;
   priority: string;
   status: string;
+  workflowStage?: string;
+  origin?: "customer" | "development";
   createdAt: string;
   updatedAt: string;
   creatorName: string;
@@ -28,6 +35,7 @@ type Event = {
   actorName: string;
   actorId: string;
   status?: string;
+  workflowStage?: string;
 };
 type Attachment = { id: string; name: string; size: number; url: string };
 type Detail = {
@@ -51,22 +59,6 @@ type Detail = {
   canManage: boolean;
   canAssign: boolean;
   canUpload: boolean;
-};
-const stages: Record<string, string> = {
-  received: "요청 접수",
-  in_progress: "개발 진행",
-  review: "검토 요청",
-  revision: "반환 · 수정",
-  completed: "완료",
-  released: "배포",
-};
-const transitions: Record<string, string[]> = {
-  received: ["in_progress"],
-  in_progress: ["review"],
-  review: ["completed", "revision"],
-  revision: ["in_progress", "review"],
-  completed: ["released", "revision"],
-  released: ["revision"],
 };
 const types: Record<string, string> = {
   feature: "기능 추가",
@@ -180,7 +172,7 @@ export default function RequestBoard({
     } else if (!isNew) {
       const result = await api<{ requests: RequestItem[] }>(base);
       if (window.location.pathname !== path) return;
-      setList(result.requests);
+      setList(result.requests.filter((r) => r.origin !== "development"));
     }
   }
   useEffect(() => {
@@ -203,7 +195,7 @@ export default function RequestBoard({
         if ("request" in d) {
           setDetail(d);
           setAssigned((d.request.assignees || []).map((m) => m.userId));
-        } else setList(d.requests);
+        } else setList(d.requests.filter((r) => r.origin !== "development"));
       })
       .catch((e) => {
         if (active) setError(e.message);
@@ -297,21 +289,18 @@ export default function RequestBoard({
       <p className="rb-muted">현재 단계와 실제 변경 이력을 확인하세요.</p>
       <ol className="rb-timeline">
         {Object.entries(stages).map(([key, label]) => {
-          const events = d.events.filter(
-            (e) =>
-              e.status === key || (key === "received" && e.kind === "created"),
-          );
-          const current = d.request.status === key;
+          const events = d.events.filter((e) => customerEventStage(e) === key);
+          const currentStage = customerRequestStage(d.request);
+          const current = currentStage === key;
+          const passed =
+            Object.keys(stages).indexOf(key) <
+            Object.keys(stages).indexOf(currentStage);
           return (
             <li
               key={key}
-              className={
-                current ? "current" : events.length ? "done" : "pending"
-              }
+              className={current ? "current" : passed ? "done" : "pending"}
             >
-              <span className="rb-dot">
-                {events.length && !current ? "✓" : ""}
-              </span>
+              <span className="rb-dot">{passed ? "✓" : ""}</span>
               <div>
                 <strong>{label}</strong>
                 <small>
@@ -319,8 +308,8 @@ export default function RequestBoard({
                     ? date(events[events.length - 1].createdAt)
                     : current
                       ? "현재 단계"
-                      : key === "revision"
-                        ? "필요 시 진행"
+                      : passed
+                        ? "진행 이력"
                         : "대기 중"}
                 </small>
                 {current && <p>현재 상태예요.</p>}
@@ -337,10 +326,10 @@ export default function RequestBoard({
             <time>{date(e.createdAt)}</time>
             <p>
               {(e.kind === "status" && e.status
-                ? `${stages[e.status]} · ${e.body || "진행 상태를 변경했어요."}`
+                ? `${stages[customerEventStage(e) ?? "received"]} · ${e.body || "진행 상태를 변경했어요."}`
                 : e.body) ||
                 (e.status
-                  ? `${stages[e.status]} 단계로 변경했어요.`
+                  ? `${stages[customerEventStage(e) ?? "received"]} 단계로 변경했어요.`
                   : e.kind === "created"
                     ? "요청을 등록했어요."
                     : e.kind === "assignment"
@@ -587,7 +576,7 @@ export default function RequestBoard({
               <span className="rb-eyebrow">{project.name}</span>
               <div className="rd-status-row">
                 <span className="rb-badge">
-                  {stages[detail.request.status]}
+                  {stages[customerRequestStage(detail.request)]}
                 </span>
                 <span title={detail.request.id}>
                   요청 ID #{detail.request.id.slice(0, 8).toUpperCase()}
@@ -652,18 +641,7 @@ export default function RequestBoard({
                     {detail.workflow?.tasks.map((t) => (
                       <div key={t.id}>
                         <strong>{t.title}</strong>
-                        <p>
-                          {
-                            (
-                              {
-                                todo: "할당 대기",
-                                in_progress: "진행 중",
-                                done: "개발 완료",
-                                released: "배포 완료",
-                              } as Record<string, string>
-                            )[t.status]
-                          }
-                        </p>
+                        <p>{t.status === "released" ? "완료" : "개발 진행"}</p>
                         {t.resultSummary && (
                           <p style={{ whiteSpace: "pre-wrap" }}>
                             {t.resultSummary}
@@ -774,40 +752,6 @@ export default function RequestBoard({
                       <p className="rd-empty">
                         아직 담당자가 배정되지 않았어요.
                       </p>
-                    )}
-                    {detail.canManage && !detail.workflow?.tasks.length && (
-                      <label>
-                        진행 단계
-                        <select
-                          aria-label="진행 단계"
-                          disabled={busy}
-                          value={detail.request.status}
-                          onChange={(e) =>
-                            void run(async () => {
-                              await api(
-                                `${base}/${requestId}`,
-                                { status: e.target.value },
-                                "PATCH",
-                              );
-                              await refresh();
-                            })
-                          }
-                        >
-                          {Object.entries(stages)
-                            .filter(
-                              ([key]) =>
-                                key === detail.request.status ||
-                                transitions[detail.request.status]?.includes(
-                                  key,
-                                ),
-                            )
-                            .map(([key, label]) => (
-                              <option key={key} value={key}>
-                                {label}
-                              </option>
-                            ))}
-                        </select>
-                      </label>
                     )}
                     {detail.canAssign && (
                       <fieldset className="rb-assignees">
@@ -939,8 +883,8 @@ export default function RequestBoard({
                   완료됨:{" "}
                   <b>
                     {
-                      list.filter((r) =>
-                        ["completed", "released"].includes(r.status),
+                      list.filter(
+                        (r) => customerRequestStage(r) === "completed",
                       ).length
                     }
                     개
@@ -1007,7 +951,7 @@ export default function RequestBoard({
                 .filter(
                   (r) =>
                     r.title.toLowerCase().includes(query.toLowerCase()) &&
-                    (!filter || r.status === filter),
+                    (!filter || customerRequestStage(r) === filter),
                 )
                 .sort((a, b) =>
                   sort === "priority"
@@ -1026,19 +970,10 @@ export default function RequestBoard({
                     onClick={() => go(`${base}/${r.id}`)}
                   >
                     <div className="rb-client-card-top">
-                      <span className={`rb-client-status ${r.status}`}>
-                        {
-                          (
-                            {
-                              received: "대기 중",
-                              in_progress: "진행 중",
-                              review: "검토 요청",
-                              revision: "반환됨",
-                              completed: "완료",
-                              released: "배포됨",
-                            } as Record<string, string>
-                          )[r.status]
-                        }
+                      <span
+                        className={`rb-client-status ${customerRequestStage(r)}`}
+                      >
+                        {stages[customerRequestStage(r)]}
                       </span>
                       <time>
                         {new Date(r.createdAt).toLocaleDateString("ko-KR", {
@@ -1080,7 +1015,7 @@ export default function RequestBoard({
               !list.some(
                 (r) =>
                   r.title.toLowerCase().includes(query.toLowerCase()) &&
-                  (!filter || r.status === filter),
+                  (!filter || customerRequestStage(r) === filter),
               ) && <p className="rb-empty">검색 조건에 맞는 요청이 없어요.</p>}
           </>
         ) : null}
@@ -1090,7 +1025,7 @@ export default function RequestBoard({
           key={requestId}
           userId={user.id}
           title={detail.request.title}
-          status={detail.request.status}
+          status={customerRequestStage(detail.request)}
           assignees={detail.request.assignees.map((m) => m.displayName)}
           events={detail.events}
           onClose={() => go(`${base}/${requestId}`)}

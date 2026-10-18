@@ -1,3 +1,7 @@
+import {
+  requestStages as statusNames,
+  customerEventStage,
+} from "./request-stages";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import "./request-conversation.css";
 export type ConversationEvent = {
@@ -5,17 +9,10 @@ export type ConversationEvent = {
   kind: string;
   body?: string | null;
   status?: string | null;
+  workflowStage?: string;
   actorId: string;
   actorName: string;
   createdAt: string;
-};
-const statusNames: Record<string, string> = {
-  received: "요청 접수",
-  in_progress: "개발 진행",
-  review: "검토 요청",
-  revision: "반환 · 수정",
-  completed: "완료",
-  released: "배포",
 };
 const time = (v: string) =>
   new Date(v).toLocaleTimeString("ko-KR", {
@@ -52,7 +49,13 @@ export default function RequestConversation({
     sendRef = useRef(onSend);
   loadRef.current = onLoad;
   sendRef.current = onSend;
-  useEffect(() => setMessages(current => events.length >= current.length ? events : current), [events]);
+  useEffect(
+    () =>
+      setMessages((current) =>
+        events.length >= current.length ? events : current,
+      ),
+    [events],
+  );
   useEffect(() => {
     if (nearBottom.current && feed.current)
       feed.current.scrollTop = feed.current.scrollHeight;
@@ -66,7 +69,9 @@ export default function RequestConversation({
       try {
         const next = await loadRef.current();
         if (active) {
-          setMessages(current => next.length >= current.length ? next : current);
+          setMessages((current) =>
+            next.length >= current.length ? next : current,
+          );
           setError("");
         }
       } catch {
@@ -100,9 +105,17 @@ export default function RequestConversation({
       setText("");
       nearBottom.current = true;
       const next = await loadRef.current();
-      setMessages(current => next.length >= current.length ? next : current);
+      setMessages((current) =>
+        next.length >= current.length ? next : current,
+      );
     } catch (e) {
-      setError(saved ? "메시지는 저장됐어요. 대화 목록을 다시 불러오는 중입니다." : e instanceof Error ? e.message : "메시지를 보내지 못했어요.");
+      setError(
+        saved
+          ? "메시지는 저장됐어요. 대화 목록을 다시 불러오는 중입니다."
+          : e instanceof Error
+            ? e.message
+            : "메시지를 보내지 못했어요.",
+      );
     } finally {
       setSending(false);
       sendLock.current = false;
@@ -120,7 +133,9 @@ export default function RequestConversation({
       <div className="rc-summary">
         <h2>{title}</h2>
         <div>
-          <span className="rc-status">{statusNames[status]}</span>
+          <span className="rc-status">
+            {statusNames[status as keyof typeof statusNames]}
+          </span>
           <p>담당: {assignees.join(", ") || "배정 대기"}</p>
         </div>
       </div>
@@ -175,8 +190,8 @@ export default function RequestConversation({
                 </article>
               ) : (
                 <p className="rc-system">
-                  {event.kind === "status"
-                    ? `상태가 [${statusNames[event.status || ""] || event.status}]로 변경되었습니다.`
+                  {event.kind === "status" || event.kind === "workflow_stage"
+                    ? `상태가 [${statusNames[customerEventStage(event) ?? "received"]}]로 변경되었습니다.`
                     : event.body || "요청 정보가 변경되었습니다."}
                   <time dateTime={event.createdAt}>
                     {time(event.createdAt)}
