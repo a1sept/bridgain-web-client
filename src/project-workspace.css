@@ -263,6 +263,9 @@
   flex: 1;
 }
 .pw-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
   height: 77px;
   background: #fff;
   border-bottom: 1px solid #ebeff5;

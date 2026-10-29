@@ -1,7 +1,6 @@
 import {
   requestStages as stages,
   customerRequestStage,
-  customerEventStage,
 } from "./request-stages";
 import RequestConversation from "./RequestConversation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -137,6 +136,29 @@ export default function RequestBoard({
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(true);
+  const [mobileDetail, setMobileDetail] = useState(() => window.matchMedia("(max-width: 900px)").matches);
+  const detailTabs = [
+    { id: "content", label: "요청 내용" },
+    { id: "comments", label: "댓글" },
+    { id: "progress", label: "진행 상태" },
+    { id: "info", label: "요청 정보" },
+  ] as const;
+  const [detailTab, setDetailTab] = useState<string>("content");
+  useEffect(() => setDetailTab("content"), [requestId]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 900px)");
+    const update = () => setMobileDetail(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const detailPanel = (id: string) => ({
+    id: `request-panel-${id}`,
+    role: mobileDetail ? "tabpanel" : undefined,
+    "aria-labelledby": mobileDetail ? `request-tab-${id}` : undefined,
+    hidden: mobileDetail && detailTab !== id,
+    tabIndex: mobileDetail ? 0 : undefined,
+  });
   const [sort, setSort] = useState("latest");
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState(""),
@@ -273,74 +295,6 @@ export default function RequestBoard({
       setNotice(warning || "요청을 등록했어요. 진행 상황을 여기서 확인하세요.");
     });
   }
-  const timeline = (d: Detail) => (
-    <section className="rb-panel">
-      <h2>진행 현황 타임라인</h2>
-      <div className="rb-timeline-summary">
-        <strong>{d.request.title}</strong>
-        <p>
-          담당 개발팀:{" "}
-          {d.request.assignees.length
-            ? d.request.assignees.map((m) => m.displayName).join(", ")
-            : "배정 대기"}
-        </p>
-        <small>최종 업데이트 {date(d.request.updatedAt)}</small>
-      </div>
-      <p className="rb-muted">현재 단계와 실제 변경 이력을 확인하세요.</p>
-      <ol className="rb-timeline">
-        {Object.entries(stages).map(([key, label]) => {
-          const events = d.events.filter((e) => customerEventStage(e) === key);
-          const currentStage = customerRequestStage(d.request);
-          const current = currentStage === key;
-          const passed =
-            Object.keys(stages).indexOf(key) <
-            Object.keys(stages).indexOf(currentStage);
-          return (
-            <li
-              key={key}
-              className={current ? "current" : passed ? "done" : "pending"}
-            >
-              <span className="rb-dot">{passed ? "✓" : ""}</span>
-              <div>
-                <strong>{label}</strong>
-                <small>
-                  {events.length
-                    ? date(events[events.length - 1].createdAt)
-                    : current
-                      ? "현재 단계"
-                      : passed
-                        ? "진행 이력"
-                        : "대기 중"}
-                </small>
-                {current && <p>현재 상태예요.</p>}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-      <h3>활동 기록</h3>
-      <div className="rb-events">
-        {d.events.map((e) => (
-          <article key={e.id}>
-            <strong>{e.actorName || "참여자"}</strong>
-            <time>{date(e.createdAt)}</time>
-            <p>
-              {(e.kind === "status" && e.status
-                ? `${stages[customerEventStage(e) ?? "received"]} · ${e.body || "진행 상태를 변경했어요."}`
-                : e.body) ||
-                (e.status
-                  ? `${stages[customerEventStage(e) ?? "received"]} 단계로 변경했어요.`
-                  : e.kind === "created"
-                    ? "요청을 등록했어요."
-                    : e.kind === "assignment"
-                      ? "담당자를 변경했어요."
-                      : "요청 정보를 업데이트했어요.")}
-            </p>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
   if (!project)
     return (
       <main className="rb-page">
@@ -352,9 +306,7 @@ export default function RequestBoard({
       </main>
     );
   return (
-    <div
-      className={`rb-shell ${suffix[1] === "conversation" && detail && !loading ? "rb-chat-open" : ""}`}
-    >
+    <div className="rb-shell">
       <header className="rb-header">
         <div>
           <button
@@ -368,9 +320,7 @@ export default function RequestBoard({
             {isNew
               ? "새로운 요청 작성"
               : requestId
-                ? suffix[1] === "timeline"
-                  ? "진행 현황 타임라인"
-                  : "요청 상세"
+                ? "요청 상세"
                 : project.name}
           </strong>
         </div>
@@ -572,7 +522,7 @@ export default function RequestBoard({
           </p>
         ) : requestId && detail ? (
           <>
-            <div className="rb-heading">
+            <div className="rb-heading rd-heading">
               <span className="rb-eyebrow">{project.name}</span>
               <div className="rd-status-row">
                 <span className="rb-badge">
@@ -584,78 +534,42 @@ export default function RequestBoard({
               </div>
               <div className="rc-title-row">
                 <h1>{detail.request.title}</h1>
-                <button
-                  type="button"
-                  className="rc-title-action"
-                  aria-label="대화 열기"
-                  title="대화 열기"
-                  aria-pressed={suffix[1] === "conversation"}
-                  onClick={() => go(`${base}/${requestId}/conversation`)}
-                >
-                  <svg
-                    width="24"
-                    height="24"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
-                    <path d="M8 11h8M8 14h5" />
-                  </svg>
-                </button>
+
               </div>
             </div>
-            <nav className="rb-tabs" aria-label="요청 상세 메뉴">
-              <button
-                className={!suffix[1] ? "selected" : ""}
-                onClick={() => go(`${base}/${requestId}`)}
-              >
-                요청 상세
-              </button>
-              <button
-                className={suffix[1] === "timeline" ? "selected" : ""}
-                onClick={() => go(`${base}/${requestId}/timeline`)}
-              >
-                진행 타임라인
-              </button>
-            </nav>
-            {suffix[1] === "timeline" ? (
-              timeline(detail)
-            ) : (
+              {mobileDetail && (
+                <nav className="rb-tabs rd-mobile-tabs" role="tablist" aria-label="요청 상세">
+                  {detailTabs.map((tab, index) => (
+                    <button
+                      key={tab.id}
+                      id={`request-tab-${tab.id}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={detailTab === tab.id}
+                      aria-controls={`request-panel-${tab.id}`}
+                      tabIndex={detailTab === tab.id ? 0 : -1}
+                      className={detailTab === tab.id ? "selected" : ""}
+                      onClick={() => setDetailTab(tab.id)}
+                      onKeyDown={(event) => {
+                        const next = event.key === "ArrowRight" ? (index + 1) % detailTabs.length
+                          : event.key === "ArrowLeft" ? (index + detailTabs.length - 1) % detailTabs.length
+                          : event.key === "Home" ? 0
+                          : event.key === "End" ? detailTabs.length - 1 : undefined;
+                        if (next === undefined) return;
+                        event.preventDefault();
+                        setDetailTab(detailTabs[next].id);
+                        document.getElementById(`request-tab-${detailTabs[next].id}`)?.focus();
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </nav>
+              )}
               <div className="rb-detail-grid rb-request-detail">
                 <div>
-                  <section className="rb-panel">
-                    <h2>연결된 회의 · 개발 업무</h2>
-                    {detail.workflow?.meetings.map((m) => (
-                      <p key={m.id}>
-                        {m.title} ·{" "}
-                        {m.decisionStatus === "final"
-                          ? "최종안"
-                          : "회의 논의 중"}
-                      </p>
-                    ))}
-                    {detail.workflow?.tasks.map((t) => (
-                      <div key={t.id}>
-                        <strong>{t.title}</strong>
-                        <p>{t.status === "released" ? "완료" : "개발 진행"}</p>
-                        {t.resultSummary && (
-                          <p style={{ whiteSpace: "pre-wrap" }}>
-                            {t.resultSummary}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                    {!detail.workflow?.tasks.length &&
-                      !detail.workflow?.meetings.length && (
-                        <p>아직 연결된 회의나 업무가 없습니다.</p>
-                      )}
-                  </section>
-                  <h2 className="rd-section-title">요청 내용</h2>
-                  <section className="rb-panel">
+                  <section className="rb-panel" {...detailPanel("content")}>
+                    <h2>요청 내용</h2>
                     <p className="rb-description">
                       {detail.request.description}
                     </p>
@@ -730,10 +644,39 @@ export default function RequestBoard({
                       </label>
                     )}
                   </section>
+                  <div {...detailPanel("comments")}>
+        <RequestConversation
+          key={requestId}
+          userId={user.id}
+          events={detail.events}
+          onSend={async (body) => {
+            await api(`${base}/${requestId}/comments`, { body });
+          }}
+          onLoad={async () => {
+            const latest = await api<Detail>(`${base}/${requestId}`);
+            if (window.location.pathname === path) setDetail(latest);
+            return latest.events;
+          }}
+        />
+                  </div>
                 </div>
                 <aside>
-                  <h2 className="rd-section-title">담당 개발팀</h2>
+                  <section className="rb-panel rd-progress" {...detailPanel("progress")}>
+                    <h2>진행 상태</h2>
+                    <ol>
+                      {Object.entries(stages).map(([key, label]) => (
+                        <li key={key} aria-current={customerRequestStage(detail.request) === key ? "step" : undefined}>
+                          {label}
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+                  <div {...detailPanel("info")}>
+                  <details className="rd-info" open={mobileDetail || infoOpen} onToggle={(event) => { if (!mobileDetail) setInfoOpen(event.currentTarget.open); }}>
+                    <summary>요청 정보</summary>
+
                   <section className="rb-panel rd-team-panel">
+                    <h2>담당 개발팀</h2>
                     {detail.request.assignees?.length ? (
                       <ul className="rd-people">
                         {detail.request.assignees.map((member) => (
@@ -795,7 +738,7 @@ export default function RequestBoard({
                       </fieldset>
                     )}
                   </section>
-                  <h2 className="rd-section-title">요청 요약 정보</h2>
+
                   <section className="rb-panel">
                     <dl className="rd-summary">
                       <div>
@@ -828,16 +771,10 @@ export default function RequestBoard({
                       </div>
                     </dl>
                   </section>
+                  </details>
+                  </div>
                 </aside>
-                <div className="rd-help">
-                  <span aria-hidden="true">ⓘ</span>
-                  <p>
-                    담당 개발팀에게 질문이나 추가 내용을 전달하려면 상단의
-                    말풍선 아이콘을 눌러주세요.
-                  </p>
-                </div>
               </div>
-            )}
           </>
         ) : !requestId ? (
           <>
@@ -1020,25 +957,7 @@ export default function RequestBoard({
           </>
         ) : null}
       </main>
-      {suffix[1] === "conversation" && requestId && detail && !loading && (
-        <RequestConversation
-          key={requestId}
-          userId={user.id}
-          title={detail.request.title}
-          status={customerRequestStage(detail.request)}
-          assignees={detail.request.assignees.map((m) => m.displayName)}
-          events={detail.events}
-          onClose={() => go(`${base}/${requestId}`)}
-          onSend={async (body) => {
-            await api(`${base}/${requestId}/comments`, { body });
-          }}
-          onLoad={async () => {
-            const latest = await api<Detail>(`${base}/${requestId}`);
-            if (window.location.pathname === path) setDetail(latest);
-            return latest.events;
-          }}
-        />
-      )}
+
     </div>
   );
 }
